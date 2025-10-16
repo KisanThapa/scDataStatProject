@@ -11,8 +11,8 @@
   "include_tfs_in_expression": false,
   "min_num_of_targets_per_tf": 10,
   "max_num_of_targets_per_tf": 150,
-  "prediction_difficulty": "supereasy",
-  "missing_percentage": 50,
+  "prediction_difficulty": "hard",
+  "missing_percentage": 80,
   "random_seed": 42,
-  "distribution_type": "normal"
+  "distribution_type": "negative_binomial"
 }
