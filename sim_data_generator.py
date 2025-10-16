@@ -432,16 +432,32 @@ if __name__ == "__main__":
         random_seed=params["random_seed"],
     )
 
-    gene_exp = generate_gene_expression(
-        params["n_cells"],
-        params["n_genes"],
-        params["include_tfs_in_expression"],
-        params["prediction_difficulty"],
-        params["missing_percentage"],
-        params["random_seed"],
-        prior_df,
-        ground_truth_df
-    )
+    # Choose expression generator version
+    distribution_type = params.get("distribution_type", "normal")
+    if distribution_type == "normal":
+        gene_exp = generate_gene_expression(
+            params["n_cells"],
+            params["n_genes"],
+            params["include_tfs_in_expression"],
+            params["prediction_difficulty"],
+            params["missing_percentage"],
+            params["random_seed"],
+            prior_df,
+            ground_truth_df
+        )
+    elif distribution_type == "negative_binomial":
+        gene_exp = generate_gene_expression2(
+            params["n_cells"],
+            params["n_genes"],
+            params["include_tfs_in_expression"],
+            params["prediction_difficulty"],
+            params["missing_percentage"],
+            params["random_seed"],
+            prior_df,
+            ground_truth_df
+        )
+    else:
+        raise ValueError("distribution_type must be one of {'normal','negative_binomial'}.")
 
     # move target column to the end for easier viewing
     prior_df = prior_df[["TF", "weight", "target"]]

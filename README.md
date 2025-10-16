@@ -1,6 +1,7 @@
 # Python project with uv environment
 
-This project uses Astral's uv to manage Python versions, virtual environments, and dependencies. Follow the steps below to install uv, initialize the project, install Python 3.12, and run the `roc_plot.ipynb` notebook.
+This project uses Astral's uv to manage Python versions, virtual environments, and dependencies. Follow the steps below
+to install uv, initialize the project, install Python 3.12, and run the `roc_plot.ipynb` notebook.
 
 ## 1) Install uv
 
@@ -20,6 +21,7 @@ This project uses Astral's uv to manage Python versions, virtual environments, a
   ```
 
 Verify:
+
 ```bash
 uv --version
 ```
@@ -29,6 +31,7 @@ uv --version
 If this repository is already set up with uv (i.e., it includes a `pyproject.toml`), you can skip to Step 3.
 
 Otherwise, initialize uv in the project directory:
+
 ```bash
 uv init
 ```
@@ -48,23 +51,28 @@ uv python pin 3.12
 ```
 
 Alternatively, you can create a virtual environment specifying Python 3.12 directly:
+
 ```bash
 uv venv --python 3.12
 ```
 
 Notes:
+
 - `uv python install` downloads a managed Python if it is not present.
 - `uv python pin 3.12` ensures commands like `uv run` use Python 3.12 in this project.
 
 ## 4) Create the virtual environment and install dependencies
 
 If the project already defines dependencies in `pyproject.toml`:
+
 ```bash
 # Create/refresh the .venv and install project dependencies
 uv sync
 ```
 
-If you are starting fresh and just want to run the notebook, add the typical notebook and plotting dependencies (adjust as needed):
+If you are starting fresh and just want to run the notebook, add the typical notebook and plotting dependencies (adjust
+as needed):
+
 ```bash
 uv add jupyter ipykernel
 uv add numpy pandas scikit-learn matplotlib seaborn
@@ -73,6 +81,7 @@ uv add numpy pandas scikit-learn matplotlib seaborn
 This updates `pyproject.toml` and installs the packages into the project’s `.venv`.
 
 Optional: Activate the virtual environment (not required if you use `uv run`):
+
 - macOS/Linux:
   ```bash
   source .venv/bin/activate
@@ -85,6 +94,7 @@ Optional: Activate the virtual environment (not required if you use `uv run`):
 ## 5) Register a Jupyter kernel for this project (recommended)
 
 Register a named kernel so the notebook runs with the project’s environment:
+
 ```bash
 uv run python -m ipykernel install --user --name uv-py312 --display-name "Python (uv, 3.12)"
 ```
@@ -93,7 +103,27 @@ You’ll later select this kernel inside Jupyter.
 
 ## 6) Run the `roc_plot.ipynb` notebook
 
+Open `simulated_data/parameters.json` to adjust parameters if needed.
 
+**Simulation Parameters Documentation**
+
+* **output_dir**: Directory for all generated files, e.g. `"simulated_data/"`.
+* **output_exp_file**: Name of simulated expression data file, e.g. `"simulated_scRNASeq_data.tsv"`.
+* **output_prior_file**: Name of generated prior network file, e.g. `"simulated_prior_data.tsv"`.
+* **output_ground_truth_file**: Name of ground-truth regulatory network file, e.g. `"simulated_ground_truth.tsv"`.
+* **n_cells**: Number of simulated single cells, e.g. `1500`.
+* **n_genes**: Number of genes in the dataset, e.g. `1500`.
+* **n_tfs**: Number of transcription factors, e.g. `70`.
+* **ground_truth_activation_prob**: Probability that a TF activates a target, e.g. `0.05`.
+* **ground_truth_inactivation_prob**: Probability that a TF represses a target, e.g. `0.05`.
+* **include_tfs_in_expression**: Whether to include TFs in expression data (`true` or `false`).
+* **min_num_of_targets_per_tf**: Minimum number of target genes per TF, e.g. `10`.
+* **max_num_of_targets_per_tf**: Maximum number of target genes per TF, e.g. `150`.
+* **prediction_difficulty**: Controls noise and complexity; options: `"supereasy"`, `"easy"`, `"medium"`, `"hard"`, `"superhard"`.
+  Corresponding scaling factors: `4.0`, `2.0`, `1.0`, `0.5`, `0.25`.
+* **missing_percentage**: Percentage of missing values in expression data (0–100), e.g. `50`.
+* **random_seed**: Seed value for reproducibility, e.g. `42`.
+* **distribution_type**: Statistical distribution for expression data; options: `"normal"`, `"negative_binomial"`.
 
 
 ## Troubleshooting
