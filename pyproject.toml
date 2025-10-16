@@ -1,0 +1,17 @@
+[project]
+name = "scdatastatproject"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "decoupler[full] @ git+https://github.com/KisanThapa/decoupler.git@main",
+    "nbconvert>=7.16.6",
+    "notebook>=7.4.7",
+    "numpy>=2.3.3",
+    "pandas>=2.3.3",
+    "pandoc>=2.4",
+    "pathlib>=1.0.1",
+    "scanpy>=1.11.4",
+    "scipy>=1.15.3",
+]

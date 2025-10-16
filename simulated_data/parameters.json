@@ -1,0 +1,16 @@
+{
+  "output_dir": "simulated_data/",
+  "output_exp_file": "simulated_scRNASeq_data.tsv",
+  "output_prior_file": "simulated_prior_data.tsv",
+  "output_ground_truth_file": "simulated_ground_truth.tsv",
+  "n_cells": 1500,
+  "n_genes": 1500,
+  "n_tfs": 70,
+  "ground_truth_activation_prob": 0.1,
+  "ground_truth_inactivation_prob": 0.05,
+  "include_tfs_in_expression": false,
+  "min_num_of_targets_per_tf": 10,
+  "max_num_of_targets_per_tf": 150,
+  "difficulty": "hard",
+  "random_seed": 42
+}
