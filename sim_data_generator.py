@@ -114,11 +114,16 @@ def generate_ground_truth(
     return pd.DataFrame(gt, index=cell_ids, columns=tf_names)
 
 
+#################################################
+# Expression is drawn from a Gaussian distribution (np.random.normal).
+# Values are continuous and smooth.
+#################################################
 def generate_gene_expression(
         n_cells: int,
         n_genes: int,
         include_tfs_in_expression: bool,
-        difficulty: str,
+        prediction_difficulty: str,
+        missing_percentage: int,
         random_seed: int,
         prior_dfs: pd.DataFrame,
         ground_truth_dfs: pd.DataFrame,
@@ -135,15 +140,21 @@ def generate_gene_expression(
 
     # Difficulty -> effect size in units of baseline standard deviation
     # Easy => stronger signal; Hard => weaker signal
-    difficulty = str(difficulty).lower()
+    difficulty = str(prediction_difficulty).lower()
     diff_to_sd = {
+        "supereasy": 4.0,
         "easy": 2.0,
         "medium": 1.0,
         "hard": 0.5,
+        "superhard": 0.25
     }
 
     if difficulty not in diff_to_sd:
-        raise ValueError("difficulty must be one of {'easy','medium','hard'}.")
+        raise ValueError("prediction_difficulty must be one of {'supereasy','easy','medium','hard','superhard'}.")
+
+    if not (0 <= missing_percentage <= 100):
+        raise ValueError("missing_percentage must be in [0, 100].")
+    missing_ratio = float(missing_percentage) / 100.0
 
     rng = np.random.default_rng(random_seed)
 
@@ -221,14 +232,26 @@ def generate_gene_expression(
     # Final non-negativity safeguard
     expr[all_feature_names] = np.clip(expr[all_feature_names].to_numpy(), a_min=0.0, a_max=None)
 
+    # Apply dropout (zero-inflation) to match target missing percentage
+    # Use Beta distribution to get per-gene dropout probabilities centered near missing_ratio
+    a, b = (missing_ratio * 20.0, (1.0 - missing_ratio) * 20.0)
+    per_gene_dropout = rng.beta(a, b, size=len(all_feature_names))  # shape (features,)
+    drop_mask = rng.random(size=expr.shape) < per_gene_dropout[None, :]
+    expr = expr * (~drop_mask)
+
     return expr
 
 
+#################################################
+# Expression is drawn from a Negative Binomial distribution (Gamma-Poisson).
+# Values are counts with realistic sparsity and variability.
+#################################################
 def generate_gene_expression2(
         n_cells: int,
         n_genes: int,
         include_tfs_in_expression: bool,
-        difficulty: str,
+        prediction_difficulty: str,
+        missing_percentage: int,
         random_seed: int,
         prior_dfs: pd.DataFrame,
         ground_truth_dfs: pd.DataFrame,
@@ -244,13 +267,22 @@ def generate_gene_expression2(
         raise ValueError("ground_truth_df is empty.")
 
     # Difficulty controls both effect size and sparsity (dropout)
-    difficulty = str(difficulty).lower()
-    # diff_effect = {"easy": 0.50, "medium": 0.25, "hard": 0.10}  # multiplicative fold-change magnitude
-    diff_effect = {"easy": 2.0, "medium": 1.0, "hard": 0.5}  # multiplicative fold-change magnitude
-    diff_dropout = {"easy": 0.50, "medium": 0.60, "hard": 0.70}  # target missing ratio (approximate)
+    prediction_difficulty = str(prediction_difficulty).lower()
 
-    if difficulty not in diff_effect:
-        raise ValueError("difficulty must be one of {'easy','medium','hard'}.")
+    diff_effect = {
+        "supereasy": 4.0,
+        "easy": 2.0,
+        "medium": 1.0,
+        "hard": 0.5,
+        "superhard": 0.25
+    }  # multiplicative fold-change magnitude
+
+    if prediction_difficulty not in diff_effect:
+        raise ValueError("prediction_difficulty must be one of {'supereasy','easy','medium','hard','superhard'}.")
+
+    if not (0 <= missing_percentage <= 100):
+        raise ValueError("missing_percentage must be in [0, 100].")
+    missing_ratio = float(missing_percentage) / 100.0
 
     rng = np.random.default_rng(random_seed)
 
@@ -285,10 +317,8 @@ def generate_gene_expression2(
     # ------------------------------------------
     # 2) Dropout (zero-inflation) to match sparsity
     # ------------------------------------------
-    # Draw per-gene dropout around the difficulty target, with variation
-    target_zero = diff_dropout[difficulty]
     # Beta simulated_data to center near target_zero with moderate spread
-    a, b = (target_zero * 20.0, (1.0 - target_zero) * 20.0)
+    a, b = (missing_ratio * 20.0, (1.0 - missing_ratio) * 20.0)
     per_gene_dropout = rng.beta(a, b, size=n_genes)  # shape (genes,)
 
     # Apply dropout mask (Bernoulli per cell-gene, using gene-specific probs)
@@ -313,7 +343,7 @@ def generate_gene_expression2(
     expr_counts = pd.DataFrame(counts, index=cell_ids, columns=gene_names)
 
     # Effect size as multiplicative factor (e.g., 1.25 means +25%)
-    alpha = diff_effect[difficulty]
+    alpha = diff_effect[prediction_difficulty]
     up_act_factor = 1.0 + alpha
     down_act_factor = 1.0 - alpha  # keep non-negative by rounding later
     up_inact_factor = 1.0 - alpha
@@ -354,7 +384,6 @@ def generate_gene_expression2(
     lib_after[lib_after == 0] = 1  # avoid division by zero
     cp10k = (expr_counts.to_numpy() / lib_after[:, None]) * 1.0e4
     log_expr = np.log1p(cp10k)
-    # log_expr = cp10k.copy()
 
     expr = pd.DataFrame(log_expr, index=cell_ids, columns=gene_names)
 
@@ -403,11 +432,12 @@ if __name__ == "__main__":
         random_seed=params["random_seed"],
     )
 
-    gene_exp = generate_gene_expression2(
+    gene_exp = generate_gene_expression(
         params["n_cells"],
         params["n_genes"],
         params["include_tfs_in_expression"],
-        params["difficulty"],
+        params["prediction_difficulty"],
+        params["missing_percentage"],
         params["random_seed"],
         prior_df,
         ground_truth_df
