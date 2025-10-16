@@ -116,7 +116,12 @@ def generate_ground_truth(
 
 #################################################
 # Expression is drawn from a Gaussian distribution (np.random.normal).
-# Values are continuous and smooth.
+#
+# Base model: Gaussian (Normal(10, 2.5))
+# Type of Noise: Additive Gaussian noise
+#
+# Values are continuous and smooth. Dropout source: Explicit Beta–Bernoulli mask
+# Output range ~[0, 20]
 #################################################
 def generate_gene_expression(
         n_cells: int,
@@ -244,7 +249,12 @@ def generate_gene_expression(
 
 #################################################
 # Expression is drawn from a Negative Binomial distribution (Gamma-Poisson).
+#
+# Base model: Negative Binomial (mean from Gamma-Poisson with moderate overdispersion)
+# Type of Noise: Multiplicative (× factor)
+#
 # Values are counts with realistic sparsity and variability.
+# Output range ~[0, 6] after log1p normalization
 #################################################
 def generate_gene_expression2(
         n_cells: int,
