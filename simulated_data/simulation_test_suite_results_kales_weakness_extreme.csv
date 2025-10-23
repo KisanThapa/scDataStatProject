@@ -1,0 +1,3 @@
+n_cells,n_genes,n_tfs,ground_truth_activation_prob,ground_truth_inactivation_prob,include_tfs_in_expression,min_num_of_targets_per_tf,max_num_of_targets_per_tf,prediction_difficulty,missing_percentage,random_seed,distribution_type,auc_viper,auc_mlm,auc_kale
+10000,3000,250,0.15,0.1,True,100,300,medium,60,964,negative_binomial,0.7519582954228904,0.7444307635794035,0.4843228085877132
+800,6000,400,0.05,0.05,False,200,800,superhard,85,258,negative_binomial,0.7536817319263731,0.7695287847970729,0.5012004281422515

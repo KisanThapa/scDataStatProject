@@ -305,6 +305,7 @@ def generate_gene_expression2(
     # 1) Simulate raw counts with NB (Gamma-Poisson)
     # ------------------------------------------
     # Per-gene propensities (unnormalized), heavy-tailed like real data
+    # Lognormal draws produce a heavy tail: few genes highly expressed, many weak.
     gene_prop = rng.lognormal(mean=0.0, sigma=1.0, size=n_genes)
     gene_prop = gene_prop / gene_prop.sum()  # convert to proportions that sum to 1
 

@@ -262,7 +262,7 @@ def run_tf_analysis(
             )
             # data_for_processing = raw_gene_exp.rank(axis=0, method='average', ascending=False)
 
-            # Ingore zeros
+            # Ignore zeros
             data_for_processing = raw_gene_exp.copy()
             mask = raw_gene_exp != 0
             data_for_processing[mask] = raw_gene_exp[mask].rank(axis=0, method='average', ascending=True)
