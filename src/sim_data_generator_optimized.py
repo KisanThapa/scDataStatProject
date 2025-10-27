@@ -60,12 +60,11 @@ def generate_prior(
             rows_weight.extend([-1] * n_down)
 
     df = pd.DataFrame({"TF": rows_tf, "target": rows_target, "weight": rows_weight})
-    # Defensive dedupe
     df = df.drop_duplicates(subset=["TF", "target", "weight"], ignore_index=True)
     return df
 
 
-def generate_prior_powerlaw(
+def generate_prior_lognormal(
         n_genes: int,
         n_tfs: int,
         min_num_of_targets_per_tf: int,
@@ -96,40 +95,28 @@ def generate_prior_powerlaw(
 
     gene_indices = np.arange(n_genes)
 
-    # Generate scale-free network topology using power-law distribution
-    # Power-law: P(k) ~ k^(-α) where α ≈ 2-3 for biological networks
-    alpha = 2.5  # Typical value for biological networks
+    # Use log-normal distribution with mu=4, sigma=0.75
+    mu = 4.0
+    sigma = 0.75
 
-    # Generate target counts from power-law distribution
-    # Using inverse transform sampling for power-law
+    # Generate target counts from log-normal distribution
     min_targets = max(1, min_num_of_targets_per_tf)  # Ensure at least 1 target
     max_targets = min(n_genes, max_num_of_targets_per_tf)
 
-    # Power-law distribution: P(x) = (α-1) * x^(-α) for x >= 1
-    # CDF: F(x) = 1 - x^(-(α-1))
-    # Inverse CDF: x = (1-u)^(-1/(α-1)) where u ~ Uniform(0,1)
+    # Generate log-normal distributed values
+    # log-normal: X ~ exp(N(mu, sigma^2))
+    log_normal_up = rng.lognormal(mean=mu, sigma=sigma, size=n_tfs)
+    log_normal_down = rng.lognormal(mean=mu, sigma=sigma, size=n_tfs)
 
-    # Generate uniform random numbers
-    u_up = rng.random(n_tfs)
-    u_down = rng.random(n_tfs)
-
-    # Transform to power-law distribution
-    # Scale to fit within [min_targets, max_targets] range
-    power_law_up = np.ceil((1 - u_up) ** (-1 / (alpha - 1))).astype(int)
-    power_law_down = np.ceil((1 - u_down) ** (-1 / (alpha - 1))).astype(int)
-
-    # Scale to desired range
-    # Map from [1, ∞] to [min_targets, max_targets]
-    scale_factor_up = (max_targets - min_targets) / (np.max(power_law_up) - 1)
-    scale_factor_down = (max_targets - min_targets) / (np.max(power_law_down) - 1)
-
+    # Scale to desired range [min_targets, max_targets]
+    # Map from log-normal range to [min_targets, max_targets]
     n_up_targets = np.clip(
-        min_targets + (power_law_up - 1) * scale_factor_up,
+        np.interp(log_normal_up, (log_normal_up.min(), log_normal_up.max()), (min_targets, max_targets)),
         min_targets, max_targets
     ).astype(int)
 
     n_down_targets = np.clip(
-        min_targets + (power_law_down - 1) * scale_factor_down,
+        np.interp(log_normal_down, (log_normal_down.min(), log_normal_down.max()), (min_targets, max_targets)),
         min_targets, max_targets
     ).astype(int)
 
@@ -158,7 +145,6 @@ def generate_prior_powerlaw(
             rows_weight.extend([-1] * n_down)
 
     df = pd.DataFrame({"TF": rows_tf, "target": rows_target, "weight": rows_weight})
-    # Defensive dedupe
     df = df.drop_duplicates(subset=["TF", "target", "weight"], ignore_index=True)
     return df
 
@@ -208,16 +194,13 @@ def generate_ground_truth(
 # Expression is drawn from a Gaussian distribution (np.random.normal).
 #
 # Base model: Gaussian (Normal(10, 2.5))
-# Type of Noise: Additive Gaussian noise
-#
-# Values are continuous and smooth. Dropout source: Explicit Beta–Bernoulli mask
-# Output range ~[0, 20]
+# Type of Noise: Multiplicative (× factor)
 #################################################
-def generate_gene_expression(
+def generate_gene_expression_gaussian(
         n_cells: int,
         n_genes: int,
         include_tfs_in_expression: bool,
-        standard_deviation_shift: float,
+        tf_effect_factor: float,
         missing_percentage: int,
         random_seed: int,
         prior_dfs: pd.DataFrame,
@@ -243,12 +226,14 @@ def generate_gene_expression(
     tf_names = list(ground_truth_dfs.columns)
     n_tfs = len(tf_names)
 
-    # 1) Generate baseline expression from Gaussian distribution
+
+    # 1) Generate a baseline expression from Gaussian distribution
     baseline_mean = 10.0
     baseline_sd = 2.5
     baseline = rng.normal(loc=baseline_mean, scale=baseline_sd, size=(n_cells, n_genes))
     baseline = np.clip(baseline, a_min=0.0, a_max=None)
     expr = baseline.astype(np.float32, copy=False)
+
 
     # 2) Build TF -> target mappings
     gene_index = {g: i for i, g in enumerate(gene_names)}
@@ -276,16 +261,15 @@ def generate_gene_expression(
         elif w == -1:
             tf_to_down_idx[ti].append(gi)
 
-    # 3) Apply regulatory effects
-    step = standard_deviation_shift * baseline_sd
-    gt_states = ground_truth_dfs.to_numpy(
-        copy=False
-    )  # shape (n_cells, n_tfs), values in {-1,0,1}
 
-    # Pre-allocate arrays for better performance
+    # 3) Apply regulatory effects using multiplicative approach
+    tf_factor = tf_effect_factor
+    gt_states = ground_truth_dfs.to_numpy(copy=False)
+
     for ti in range(n_tfs):
         ups = np.array(tf_to_up_idx[ti], dtype=np.int64)
         downs = np.array(tf_to_down_idx[ti], dtype=np.int64)
+
         if ups.size == 0 and downs.size == 0:
             continue
 
@@ -293,39 +277,25 @@ def generate_gene_expression(
         act_cells = np.where(states == 1)[0]
         inact_cells = np.where(states == -1)[0]
 
-        # Use in-place operations for better memory efficiency
         if act_cells.size:
             if ups.size:
-                expr[np.ix_(act_cells, ups)] += step
-                np.maximum(
-                    expr[np.ix_(act_cells, ups)], 0.0, out=expr[np.ix_(act_cells, ups)]
-                )
+                # +ve targets, TF activated: multiply by factor
+                expr[np.ix_(act_cells, ups)] *= tf_factor
             if downs.size:
-                expr[np.ix_(act_cells, downs)] -= step
-                np.maximum(
-                    expr[np.ix_(act_cells, downs)],
-                    0.0,
-                    out=expr[np.ix_(act_cells, downs)],
-                )
+                # -ve targets, TF activated: divide by factor
+                expr[np.ix_(act_cells, downs)] /= tf_factor
 
         if inact_cells.size:
             if ups.size:
-                expr[np.ix_(inact_cells, ups)] -= step
-                np.maximum(
-                    expr[np.ix_(inact_cells, ups)],
-                    0.0,
-                    out=expr[np.ix_(inact_cells, ups)],
-                )
+                # +ve targets, TF inactivated: divide by factor
+                expr[np.ix_(inact_cells, ups)] /= tf_factor
             if downs.size:
-                expr[np.ix_(inact_cells, downs)] += step
-                np.maximum(
-                    expr[np.ix_(inact_cells, downs)],
-                    0.0,
-                    out=expr[np.ix_(inact_cells, downs)],
-                )
+                # -ve targets, TF inactivated: multiply by factor
+                expr[np.ix_(inact_cells, downs)] *= tf_factor
 
-    # Final non-negativity safeguard
+    # Ensure non-negativity
     np.maximum(expr, 0.0, out=expr)
+
 
     # 4) Dropout (zero-inflation)
     eps = 1e-6
@@ -335,8 +305,10 @@ def generate_gene_expression(
     drop_mask = rng.random(size=expr.shape) < per_gene_dropout[None, :]
     expr = expr * (~drop_mask)
 
+
     # 5) Create final DataFrame
     expr_df = pd.DataFrame(expr, index=cell_ids, columns=gene_names)
+
 
     # 9) Add TF expression if requested
     if include_tfs_in_expression:
@@ -364,24 +336,12 @@ def generate_gene_expression(
 #
 # Base model: Negative Binomial (mean from Gamma-Poisson with moderate overdispersion)
 # Type of Noise: Multiplicative (× factor)
-#
-# Values are counts with realistic sparsity and variability.
-# Steps:
-#   1) Generate gene propensities (don't normalize yet)
-#   2) Apply gamma directly to create cell-to-cell variability
-#   3) Build TF-target mappings
-#   4) Apply regulatory effects directly to gamma output
-#   5) Normalize to library sizes
-#   6) Apply poisson to get final counts
-#   7) Apply dropout to achieve exact overall missing percentage
-#   8) Normalize to target library size
-#   9) Add TF expression if requested
 #################################################
-def generate_gene_expression2(
+def generate_gene_expression_neg_binomial(
         n_cells: int,
         n_genes: int,
         include_tfs_in_expression: bool,
-        standard_deviation_shift: float,
+        tf_effect_factor: float,
         missing_percentage: int,
         random_seed: int,
         prior_dfs: pd.DataFrame,
@@ -395,9 +355,9 @@ def generate_gene_expression2(
         raise ValueError("prior_df is empty.")
     if ground_truth_dfs.empty:
         raise ValueError("ground_truth_df is empty.")
-
     if not (0 <= missing_percentage <= 100):
         raise ValueError("missing_percentage must be in [0, 100].")
+
     missing_ratio = float(missing_percentage) / 100.0
 
     rng = np.random.default_rng(random_seed)
@@ -407,15 +367,17 @@ def generate_gene_expression2(
     tf_names = list(ground_truth_dfs.columns)
     n_tfs = len(tf_names)
 
+
     # 1) Generate gene propensities (don't normalize yet)
-    gene_prop = rng.lognormal(mean=2.0, sigma=0.5, size=n_genes)
-    # gene_prop = rng.lognormal(mean=1.0, sigma=0.75, size=n_genes)
+    gene_prop = rng.lognormal(mean=0, sigma=0.75, size=n_genes)
+
 
     # 2) Apply gamma directly to create cell-to-cell variability
     theta = 5.0
     gamma_shape = theta
     gamma_scale = gene_prop / theta
     rate_per_gene = rng.gamma(shape=gamma_shape, scale=gamma_scale, size=(n_cells, n_genes))
+
 
     # 3) Build TF-target mappings
     gene_index = {g: i for i, g in enumerate(gene_names)}
@@ -425,6 +387,7 @@ def generate_gene_expression2(
 
     if not {"TF", "target", "weight"}.issubset(prior_dfs.columns):
         raise ValueError("prior_df must contain columns {'TF','target','weight'}")
+
     prior_tf = prior_dfs["TF"].to_numpy()
     prior_target = prior_dfs["target"].to_numpy()
     prior_weight = prior_dfs["weight"].to_numpy()
@@ -439,19 +402,15 @@ def generate_gene_expression2(
         elif w == -1:
             tf_to_down_idx[ti].append(gi)
 
+
     # 4) Apply regulatory effects directly to gamma output
-    alpha = standard_deviation_shift
-    up_act_factor = 1.0 + alpha
-    down_act_factor = max(0.0, 1.0 - alpha)  # Clip to 0
-    up_inact_factor = max(0.0, 1.0 - alpha)  # Clip to 0
-    down_inact_factor = 1.0 + alpha
-
+    tf_factor = tf_effect_factor
     gt_states = ground_truth_dfs.to_numpy(copy=False)
-
     # Apply per TF in a vectorized manner over all cells
     for ti in range(n_tfs):
         ups = np.array(tf_to_up_idx[ti], dtype=np.int64)
         downs = np.array(tf_to_down_idx[ti], dtype=np.int64)
+
         if ups.size == 0 and downs.size == 0:
             continue
 
@@ -461,59 +420,63 @@ def generate_gene_expression2(
 
         if act_cells.size:
             if ups.size:
-                rate_per_gene[np.ix_(act_cells, ups)] *= up_act_factor
+                rate_per_gene[np.ix_(act_cells, ups)] *= tf_factor  # +ve targets, TF activated
             if downs.size:
-                rate_per_gene[np.ix_(act_cells, downs)] *= down_act_factor
+                rate_per_gene[np.ix_(act_cells, downs)] /= tf_factor  # -ve targets, TF activated
 
         if inact_cells.size:
             if ups.size:
-                rate_per_gene[np.ix_(inact_cells, ups)] *= up_inact_factor
+                rate_per_gene[np.ix_(inact_cells, ups)] /= tf_factor  # +ve targets, TF inactivated
             if downs.size:
-                rate_per_gene[np.ix_(inact_cells, downs)] *= down_inact_factor
+                rate_per_gene[np.ix_(inact_cells, downs)] *= tf_factor  # -ve targets, TF inactivated
 
-    # 5) Normalize to library sizes
-    target_libsize = 5.0e4  # 50,000
+
+    # 5) For each cell, normalize sum to 1
+    cell_totals = rate_per_gene.sum(axis=1, keepdims=True)
+    cell_totals = np.where(cell_totals == 0, 1, cell_totals)  # Avoid division by zero
+    rate_per_gene = rate_per_gene / cell_totals
+
+
+    # 6) Normalize to library sizes
+    target_libsize = 10.0e4  # 50,000
     libsize = rng.lognormal(mean=np.log(target_libsize), sigma=0.35, size=n_cells)
     mean_mat = rate_per_gene * libsize[:, None]  # Scale by library size
 
-    # 6) Apply poisson to get final counts
+
+    # 7) Apply poisson to get final counts
     expr_counts = rng.poisson(mean_mat).astype(np.int64)
 
-    # 7) Dropout (zero-inflation)
-    eps = 1e-6
-    a = max(missing_ratio, eps) * 20.0
-    b = max(1.0 - missing_ratio, eps) * 20.0
-    per_gene_dropout = rng.beta(a, b, size=n_genes)
-    drop_mask = rng.random(size=expr_counts.shape) < per_gene_dropout[None, :]
+
+    # 8) Dropout (zero-inflation)
+    n_zeros = np.sum(expr_counts == 0)
+    current_missing_ratio = n_zeros / expr_counts.size
+    print("Zero percentage before dropout:", 100.0 * current_missing_ratio)
+    # Simple random dropout: for each value, randomly decide if it should be zero
+
+    drop_mask = rng.random(size=expr_counts.shape) < missing_ratio
     expr_counts = expr_counts * (~drop_mask)
 
-    # 8) Normalize
-    lib_after = expr_counts.sum(axis=1)  # Calculate Library Size Per Cell
-    lib_after = np.where(lib_after == 0, 1, lib_after)  # Handle Zero Library Size
-    cp10k = (expr_counts / lib_after[:, None]) * target_libsize  # Normalize to Target Library Size
+    n_zeros = np.sum(expr_counts == 0)
+    current_missing_ratio = n_zeros / expr_counts.size
+    print("Zero percentage after dropout:", 100.0 * current_missing_ratio)
 
-    expr = pd.DataFrame(cp10k, index=cell_ids, columns=gene_names)
+    expr = pd.DataFrame(expr_counts, index=cell_ids, columns=gene_names)
+    expr.clip(lower=0.0)
 
-    # 9) Add TF expression if requested
+    # 9) Include TFs as expression features
     if include_tfs_in_expression:
         tf_names_arr = np.array(tf_names, dtype=object)
-        # Sparse TF expression
-        tf_counts = rng.poisson(0.1, size=(n_cells, len(tf_names_arr)))
-        tf_drop = rng.random(size=tf_counts.shape) < 0.8
-        tf_counts = tf_counts * (~tf_drop)
+        # Sparse TF expression (lower baseline)
+        tf_baseline = rng.lognormal(
+            mean=1.0, sigma=0.75, size=(n_cells, len(tf_names_arr))
+        )
 
-        # Use TF-specific library sizes
-        tf_lib_after = tf_counts.sum(axis=1)
-        tf_lib_after = np.where(tf_lib_after == 0, 1, tf_lib_after)
-        tf_cp10k = (tf_counts / tf_lib_after[:, None]) * target_libsize
-        tf_df = pd.DataFrame(tf_cp10k, index=cell_ids, columns=tf_names_arr)
+        # Apply dropout to TFs
+        tf_drop = rng.random(size=tf_baseline.shape) < 0.8
+        tf_baseline = tf_baseline * (~tf_drop)
+
+        tf_df = pd.DataFrame(tf_baseline.astype(np.int64), index=cell_ids, columns=tf_names_arr)
         expr = pd.concat([expr, tf_df], axis=1)
-
-    # 10) Final non-negativity safeguard
-    expr = expr.clip(lower=0.0)
-
-    # 11) Log-transform for downstream compatibility
-    expr = expr.apply(lambda x: np.log1p(x) if np.issubdtype(x.dtype, np.number) else x)
 
     return expr
 
@@ -530,45 +493,45 @@ if __name__ == "__main__":
         params = json.load(f)
         print(params)
 
-    prior_df = generate_prior(
-        params["n_genes"],
-        params["n_tfs"],
-        params["min_num_of_targets_per_tf"],
-        params["max_num_of_targets_per_tf"],
-        params["random_seed"],
+    prior_df = generate_prior_lognormal(
+        n_genes=params["n_genes"],
+        n_tfs=params["n_tfs"],
+        min_num_of_targets_per_tf=params["min_num_of_targets_per_tf"],
+        max_num_of_targets_per_tf=params["max_num_of_targets_per_tf"],
+        random_seed=params["random_seed"],
     )
 
     ground_truth_df = generate_ground_truth(
-        params["n_cells"],
-        params["n_tfs"],
+        n_cells=params["n_cells"],
+        n_tfs=params["n_tfs"],
         activation_prob=params["ground_truth_activation_prob"],
         inactivation_prob=params["ground_truth_inactivation_prob"],
         random_seed=params["random_seed"],
     )
 
-    # Choose expression generator version
-    distribution_type = params.get("distribution_type", "normal")
+    # Choose an expression generator version
+    distribution_type = params.get("distribution_type", "negative_binomial")
     if distribution_type == "normal":
-        gene_exp = generate_gene_expression(
-            params["n_cells"],
-            params["n_genes"],
-            params["include_tfs_in_expression"],
-            params["standard_deviation_shift"],
-            params["missing_percentage"],
-            params["random_seed"],
-            prior_df,
-            ground_truth_df,
+        gene_exp = generate_gene_expression_gaussian(
+            n_cells=params["n_cells"],
+            n_genes=params["n_genes"],
+            include_tfs_in_expression=False,
+            tf_effect_factor=params["tf_effect_factor"],
+            missing_percentage=params["missing_percentage"],
+            random_seed=params["random_seed"],
+            prior_dfs=prior_df,
+            ground_truth_dfs=ground_truth_df,
         )
     elif distribution_type == "negative_binomial":
-        gene_exp = generate_gene_expression2(
-            params["n_cells"],
-            params["n_genes"],
-            params["include_tfs_in_expression"],
-            params["standard_deviation_shift"],
-            params["missing_percentage"],
-            params["random_seed"],
-            prior_df,
-            ground_truth_df,
+        gene_exp = generate_gene_expression_neg_binomial(
+            n_cells=params["n_cells"],
+            n_genes=params["n_genes"],
+            include_tfs_in_expression=False,
+            tf_effect_factor=params["tf_effect_factor"],
+            missing_percentage=params["missing_percentage"],
+            random_seed=params["random_seed"],
+            prior_dfs=prior_df,
+            ground_truth_dfs=ground_truth_df,
         )
     else:
         raise ValueError("distribution_type must be one of {'normal','negative_binomial'}.")
