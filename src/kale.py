@@ -1,5 +1,5 @@
+import argparse
 import math
-import sys
 
 import numpy as np
 import pandas as pd
@@ -257,20 +257,15 @@ def run_tf_analysis(
 
         elif "rank_of_ranks" in analysis_method:
             print("Using raw gene expression as input for per-cell ranking...")
-            raw_gene_exp = pd.DataFrame(
-                X, index=adata.obs_names, columns=adata.var_names
+            data_for_processing = pd.DataFrame(
+                X, index=adata.obs_names, columns=adata.var_names, dtype=float
             )
-            # data_for_processing = raw_gene_exp.rank(axis=0, method='average', ascending=False)
-
-            # Ignore zeros
-            data_for_processing = raw_gene_exp.astype('float64').copy()
-            mask = raw_gene_exp != 0
-            data_for_processing[mask] = raw_gene_exp[mask].rank(axis=0, method='average', ascending=True)
-            data_for_processing[~mask] = 0
-
             if ignore_zeros:
-                # The processing functions will handle NaNs correctly during ranking
-                data_for_processing.replace(0, np.nan, inplace=True)
+                mask = data_for_processing != 0
+                data_for_processing[mask] = data_for_processing[mask].rank(axis=0, method='average', ascending=True)
+                data_for_processing[~mask] = 0
+            else:
+                data_for_processing = data_for_processing.rank(axis=0, method='average', ascending=True)
         else:
             raise ValueError(f"Unknown analysis method family for: {analysis_method}")
 
@@ -361,9 +356,9 @@ def run_tf_analysis(
 def _func_kale(
         adata: AnnData = None,
         net: pd.DataFrame = None,
-        method: str = "ranks_from_zscore",
+        method: str = "rank_of_ranks",
         min_targets: int = 0,
-        ignore_zeros: bool = False,
+        ignore_zeros: bool = True,
         cores: int = 8,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
@@ -417,30 +412,39 @@ def _func_kale(
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        print("Usage: python kale.py <gene_exp_file> <prior_file> <output_file>")
-        sys.exit(1)
+    def str_to_bool(x):
+        return x.lower() == "true"
 
-    gene_exp_file = sys.argv[1]
-    prior_file = sys.argv[2]
-    output_file = sys.argv[3]
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--gene_exp_file", required=True)
+    parser.add_argument("--prior_file", required=True)
+    parser.add_argument("--output_file", required=True)
+    parser.add_argument("--ignore_zeros", required=True, type=str_to_bool)
+    parser.add_argument("--cores", default=8, type=int)
+    parser.add_argument("--method", default="rank_of_ranks")
+    args = parser.parse_args()
 
     # gene_exp_file = "simulated_data/simulated_scRNASeq_data.tsv"
     # prior_file = "simulated_data/simulated_prior_data.tsv"
     # output_file = "simulated_data/test_kale_scores.tsv"
 
-    gene_exp = pd.read_csv(gene_exp_file, sep="\t", index_col=0)
+    gene_exp = pd.read_csv(args.gene_exp_file, sep="\t", index_col=0)
     adata = sc.AnnData(gene_exp)
 
     effect_map = {"upregulates-expression": 1, "downregulates-expression": -1}
 
     net = pd.read_csv(
-        prior_file,
+        args.prior_file,
         sep="\t",
         names=["source", "weight", "target"],
         usecols=[0, 1, 2],
         converters={"weight": effect_map.get}
     )[["source", "target", "weight"]]
 
-    score_kale, pvalue_kale = _func_kale(adata, net, method="rank_of_ranks")
-    score_kale.to_csv(output_file, sep="\t", index=True)
+    score_kale, pvalue_kale = _func_kale(adata,
+                                         net,
+                                         method=args.method,
+                                         ignore_zeros=args.ignore_zeros,
+                                         cores=args.cores)
+    score_kale.to_csv(args.output_file, sep="\t", index=True)
