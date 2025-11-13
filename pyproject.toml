@@ -12,6 +12,10 @@ dependencies = [
     "pandas>=2.3.3",
     "pandoc>=2.4",
     "pathlib>=1.0.1",
+    "ruff>=0.14.4",
     "scanpy>=1.11.4",
     "scipy>=1.15.3",
 ]
+
+[tool.ruff]
+line-length = 130

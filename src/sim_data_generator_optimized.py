@@ -10,6 +10,7 @@ def generate_prior(
         n_tfs: int,
         min_num_of_targets_per_tf: int,
         max_num_of_targets_per_tf: int,
+        overlap_alpha_factor: int,
         random_seed: int | None = None,
 ) -> pd.DataFrame:
     print("Generating prior data...")
@@ -61,6 +62,47 @@ def generate_prior(
 
     df = pd.DataFrame({"TF": rows_tf, "target": rows_target, "weight": rows_weight})
     df = df.drop_duplicates(subset=["TF", "target", "weight"], ignore_index=True)
+
+    prior_overlapped_updated = {}
+    new_prior_net = []
+    if overlap_alpha_factor > 0:
+        unique_tfs = df['TF'].unique()
+        if len(unique_tfs) >= 2:
+            group_size = 5  # adjust if desired
+            prior_grouped = df.groupby("TF").size().to_dict()
+
+            for i in range(0, len(unique_tfs), group_size):
+                current_tfs = unique_tfs[i:i + group_size]
+                current_targets = df[df['TF'].isin(current_tfs)]['target'].unique().tolist()
+                targets_weights = rng.choice([1, -1], size=len(current_targets))
+                rng.shuffle(current_targets)
+                current_targets_len = len(current_targets)
+
+                for tf in current_tfs:
+                    added_targets = prior_overlapped_updated.get(tf, [])
+                    original_target_count = prior_grouped[tf]
+
+                    mean = (current_targets_len - 1) / 2
+                    std = current_targets_len / (
+                                len(current_tfs) * overlap_alpha_factor)  # len(current_tfs) = group size
+
+                    while len(added_targets) < original_target_count:
+                        random_idx = int(rng.normal(mean, std))
+
+                        if 0 <= random_idx < current_targets_len:
+                            candidate = current_targets[random_idx]
+                            if candidate not in added_targets:
+                                candidate_weight = targets_weights[random_idx]
+                                added_targets.append(candidate)
+                                new_prior_net.append({'TF': tf, 'target': candidate, 'weight': candidate_weight})
+
+                    prior_overlapped_updated[tf] = added_targets
+
+            new_prior_net_df = pd.DataFrame(new_prior_net)
+            df = new_prior_net_df
+
+    df = df.drop_duplicates(subset=["TF", "target"], keep="first").reset_index(drop=True)
+
     return df
 
 
@@ -69,6 +111,7 @@ def generate_prior_lognormal(
         n_tfs: int,
         min_num_of_targets_per_tf: int,
         max_num_of_targets_per_tf: int,
+        overlap_alpha_factor: int,
         random_seed: int | None = None,
 ) -> pd.DataFrame:
     print("Generating prior data...")
@@ -99,7 +142,6 @@ def generate_prior_lognormal(
     # Use log-normal distribution with mu=4, sigma=0.75
     mu = 0
     sigma = 1.7
-    # sigma = 0.1
 
     # Generate target counts from log-normal distribution
     min_targets = max(1, min_num_of_targets_per_tf)  # Ensure at least 1 target
@@ -148,13 +190,55 @@ def generate_prior_lognormal(
 
     df = pd.DataFrame({"TF": rows_tf, "target": rows_target, "weight": rows_weight})
     df = df.drop_duplicates(subset=["TF", "target", "weight"], ignore_index=True)
+
+    prior_overlapped_updated = {}
+    new_prior_net = []
+    if overlap_alpha_factor > 0:
+        unique_tfs = df['TF'].unique()
+        if len(unique_tfs) >= 2:
+            group_size = 5  # adjust if desired
+            prior_grouped = df.groupby("TF").size().to_dict()
+
+            for i in range(0, len(unique_tfs), group_size):
+                current_tfs = unique_tfs[i:i + group_size]
+                current_targets = df[df['TF'].isin(current_tfs)]['target'].unique().tolist()
+                targets_weights = rng.choice([1, -1], size=len(current_targets))
+                rng.shuffle(current_targets)
+                current_targets_len = len(current_targets)
+
+                for tf in current_tfs:
+                    added_targets = prior_overlapped_updated.get(tf, [])
+                    original_target_count = prior_grouped[tf]
+
+                    mean = (current_targets_len - 1) / 2
+                    std = current_targets_len / (
+                                len(current_tfs) * overlap_alpha_factor)  # len(current_tfs) = group size
+
+                    while len(added_targets) < original_target_count:
+                        random_idx = int(rng.normal(mean, std))
+
+                        if 0 <= random_idx < current_targets_len:
+                            candidate = current_targets[random_idx]
+                            if candidate not in added_targets:
+                                candidate_weight = targets_weights[random_idx]
+                                added_targets.append(candidate)
+                                new_prior_net.append({'TF': tf, 'target': candidate, 'weight': candidate_weight})
+
+                    prior_overlapped_updated[tf] = added_targets
+
+            new_prior_net_df = pd.DataFrame(new_prior_net)
+            df = new_prior_net_df
+
+    df = df.drop_duplicates(subset=["TF", "target"], keep="first").reset_index(drop=True)
+
     return df
 
 
 def generate_prior_poisson(
         n_genes: int,
         n_tfs: int,
-        lambda_param: float = 100.0,
+        lambda_param: float,
+        overlap_alpha_factor: int,
         random_seed: int | None = None,
 ) -> pd.DataFrame:
     print("Generating prior data (Poisson targets)...")
@@ -176,11 +260,9 @@ def generate_prior_poisson(
     gene_indices = np.arange(n_genes)
 
     # Draw up/down target counts per TF from Poisson(λ), then clip to [1, n_genes]
-    n_up_targets = rng.poisson(lam=lambda_param, size=n_tfs)
-    n_down_targets = rng.poisson(lam=lambda_param, size=n_tfs)
-
-    n_up_targets = np.clip(n_up_targets, 1, n_genes).astype(int)
-    n_down_targets = np.clip(n_down_targets, 1, n_genes).astype(int)
+    targets = rng.poisson(lam=lambda_param, size=n_tfs)
+    n_up_targets = rng.poisson(lam=targets / 2)
+    n_down_targets = targets - n_up_targets
 
     for i, tf in enumerate(tfs):
         n_up = int(n_up_targets[i])
@@ -207,6 +289,48 @@ def generate_prior_poisson(
 
     df = pd.DataFrame({"TF": rows_tf, "target": rows_target, "weight": rows_weight})
     df = df.drop_duplicates(subset=["TF", "target", "weight"], ignore_index=True)
+
+    # Add overlap if specified
+    prior_overlapped_updated = {}
+    overlapped_prior_net = []
+
+    if overlap_alpha_factor > 0:
+        unique_tfs = df['TF'].unique()
+        if len(unique_tfs) >= 2:
+            group_size = 5  # adjust if desired
+            prior_grouped = df.groupby("TF").size().to_dict()
+
+            for i in range(0, len(unique_tfs), group_size):
+                current_tfs = unique_tfs[i:i + group_size]
+                current_targets = df[df['TF'].isin(current_tfs)]['target'].unique().tolist()
+                targets_weights = rng.choice([1, -1], size=len(current_targets))
+                rng.shuffle(current_targets)
+                current_targets_len = len(current_targets)
+
+                for tf in current_tfs:
+                    added_targets = prior_overlapped_updated.get(tf, [])
+                    original_target_count = prior_grouped[tf]
+
+                    mean = (current_targets_len - 1) / 2
+                    std = current_targets_len / (len(current_tfs) * overlap_alpha_factor)  # len(current_tfs) = group size
+
+                    while len(added_targets) < original_target_count:
+                        random_idx = int(rng.normal(mean, std))
+
+                        if 0 <= random_idx < current_targets_len:
+                            target_candidate = current_targets[random_idx]
+                            if target_candidate not in added_targets:
+                                candidate_weight = targets_weights[random_idx]
+                                added_targets.append(target_candidate)
+                                overlapped_prior_net.append({'TF': tf, 'target': target_candidate, 'weight': candidate_weight})
+
+                    prior_overlapped_updated[tf] = added_targets
+
+            new_prior_net_df = pd.DataFrame(overlapped_prior_net)
+            df = new_prior_net_df
+
+    df = df.drop_duplicates(subset=["TF", "target"], keep="first").reset_index(drop=True)
+
     return df
 
 
@@ -217,9 +341,9 @@ def generate_ground_truth(
         random_seed: int | None = None,
 ) -> pd.DataFrame:
     """
-    Create a (n_cells x n_tfs) matrix initialized to 0.
-    Randomly set a subset to +1 (activated) and a disjoint subset to -1 (inactivated).
-    No cell–TF pair gets both; conflicts are resolved by random tie-break.
+        Create a (n_cells x n_tfs) matrix initialized to 0.
+        Randomly set a subset to +1 (activated) and a disjoint subset to -1 (inactivated).
+        No cell–TF pair gets both; conflicts are resolved by random tie-break.
     """
     if n_cells <= 0 or n_tfs <= 0:
         raise ValueError("n_cells and n_tfs must be positive.")
@@ -498,14 +622,16 @@ def generate_gene_expression_neg_binomial(
     n_zeros = np.sum(expr_counts == 0)
     current_missing_ratio = n_zeros / expr_counts.size
     print("Zero percentage before dropout:", 100.0 * current_missing_ratio)
-    # Simple random dropout: for each value, randomly decide if it should be zero
 
-    drop_mask = rng.random(size=expr_counts.shape) < missing_ratio
-    expr_counts = expr_counts * (~drop_mask)
-
-    n_zeros = np.sum(expr_counts == 0)
-    current_missing_ratio = n_zeros / expr_counts.size
-    print("Zero percentage after dropout:", 100.0 * current_missing_ratio)
+    # Repeat until a desired missing ratio is achieved
+    if missing_ratio > current_missing_ratio:
+        drop_mask = rng.random(size=expr_counts.shape) < missing_ratio
+        expr_counts = expr_counts * (~drop_mask)
+        n_zeros = np.sum(expr_counts == 0)
+        current_missing_ratio = n_zeros / expr_counts.size
+        print("Zero percentage after dropout:", 100.0 * current_missing_ratio)
+    else:
+        print("No additional dropout applied.")
 
     expr = pd.DataFrame(expr_counts, index=cell_ids, columns=gene_names)
     expr.clip(lower=0.0)
@@ -528,183 +654,9 @@ def generate_gene_expression_neg_binomial(
     return expr
 
 
-def generate_gene_expression_neg_binomial_old(
-        n_cells: int,
-        n_genes: int,
-        include_tfs_in_expression: bool,
-        prediction_difficulty: str,
-        missing_percentage: int,
-        random_seed: int,
-        prior_dfs: pd.DataFrame,
-        ground_truth_dfs: pd.DataFrame,
-) -> pd.DataFrame:
-    print("Generating gene expression data...")
-
-    # Validate inputs
-    if n_cells <= 0 or n_genes <= 0:
-        raise ValueError("n_cells and n_genes must be positive.")
-    if prior_dfs.empty:
-        raise ValueError("prior_df is empty.")
-    if ground_truth_dfs.empty:
-        raise ValueError("ground_truth_df is empty.")
-
-    # Difficulty controls both effect size and sparsity (dropout)
-    prediction_difficulty = str(prediction_difficulty).lower()
-
-    diff_effect = {
-        "supereasy": 4.0,
-        "easy": 2.0,
-        "medium": 1.0,
-        "hard": 0.5,
-        "superhard": 0.25
-    }  # multiplicative fold-change magnitude
-
-    if prediction_difficulty not in diff_effect:
-        raise ValueError("prediction_difficulty must be one of {'supereasy','easy','medium','hard','superhard'}.")
-
-    if not (0 <= missing_percentage <= 100):
-        raise ValueError("missing_percentage must be in [0, 100].")
-    missing_ratio = float(missing_percentage) / 100.0
-
-    rng = np.random.default_rng(random_seed)
-
-    # Names
-    cell_ids = [f"Cell_{i + 1}" for i in range(n_cells)]
-    gene_names = np.array([f"G_{i + 1}" for i in range(n_genes)], dtype=object)
-    tf_names = list(ground_truth_dfs.columns)
-    n_tfs = len(tf_names)
-
-    # ------------------------------------------
-    # 1) Simulate raw counts with NB (Gamma-Poisson)
-    # ------------------------------------------
-    # Per-gene propensities (unnormalized), heavy-tailed like real data
-    gene_prop = rng.lognormal(mean=0.0, sigma=1.0, size=n_genes)
-    gene_prop = gene_prop / gene_prop.sum()  # convert to proportions that sum to 1
-
-    # Per-cell library sizes (UMI totals), lognormal variability
-    target_libsize = 1.0e4  # typical 10k UMIs per cell median
-    libsize = rng.lognormal(mean=np.log(target_libsize), sigma=0.35, size=n_cells)
-
-    # Mean matrix (cells x genes): expected counts before dispersion
-    mean_mat = np.outer(libsize, gene_prop)  # shape (n_cells, n_genes)
-
-    # Negative binomial via Gamma-Poisson
-    theta = 5.0
-    gamma_shape = theta
-    gamma_scale = mean_mat / theta
-    rate = rng.gamma(shape=gamma_shape, scale=gamma_scale)  # same shape as mean_mat
-    counts = rng.poisson(rate)
-
-    # ------------------------------------------
-    # 2) Dropout (zero-inflation) to match sparsity
-    # ------------------------------------------
-    # Beta simulated_data to center near target_zero with moderate spread
-    a, b = (missing_ratio * 20.0, (1.0 - missing_ratio) * 20.0)
-    per_gene_dropout = rng.beta(a, b, size=n_genes)  # shape (genes,)
-
-    # Apply dropout mask (Bernoulli per cell-gene, using gene-specific probs)
-    drop_mask = rng.random(size=counts.shape) < per_gene_dropout[None, :]
-    counts = counts * (~drop_mask)
-
-    # ------------------------------------------
-    # 3) Regulatory effects from TF states
-    # ------------------------------------------
-    # Build maps TF -> up/down targets (only among simulated genes)
-    gene_index = {g: i for i, g in enumerate(gene_names)}
-    tf_name_to_idx = {name: i for i, name in enumerate(tf_names)}
-    tf_to_up_idx = [[] for _ in range(n_tfs)]
-    tf_to_down_idx = [[] for _ in range(n_tfs)]
-
-    if not {"TF", "target", "weight"}.issubset(prior_dfs.columns):
-        raise ValueError("prior_df must contain columns {'TF','target','weight'}")
-
-    # Convert to numpy arrays once for faster iteration
-    prior_tf = prior_dfs["TF"].to_numpy()
-    prior_target = prior_dfs["target"].to_numpy()
-    prior_weight = prior_dfs["weight"].to_numpy()
-
-    # Vectorized mapping using boolean indexing
-    for tf, tgt, w in zip(prior_tf, prior_target, prior_weight):
-        gi = gene_index.get(tgt, None)
-        ti = tf_name_to_idx.get(tf, None)
-        if gi is None or ti is None:
-            continue
-        if w == 1:
-            tf_to_up_idx[ti].append(gi)
-        elif w == -1:
-            tf_to_down_idx[ti].append(gi)
-
-    # Effect size as multiplicative factor (e.g., 1.25 means +25%)
-    alpha = diff_effect[prediction_difficulty]
-    up_act_factor = 1.0 + alpha
-    down_act_factor = 1.0 - alpha  # keep non-negative by rounding later
-    up_inact_factor = 1.0 - alpha
-    down_inact_factor = 1.0 + alpha
-
-    # Convert ground truth to numpy for vectorized operations
-    gt_states = ground_truth_dfs.to_numpy(copy=False)  # shape (n_cells, n_tfs)
-
-    # Apply regulatory effects using vectorized operations
-    for ti in range(n_tfs):
-        ups = np.array(tf_to_up_idx[ti], dtype=np.int64)
-        downs = np.array(tf_to_down_idx[ti], dtype=np.int64)
-
-        if ups.size == 0 and downs.size == 0:
-            continue
-
-        states = gt_states[:, ti]  # shape (n_cells,)
-        act_cells = np.where(states == 1)[0]
-        inact_cells = np.where(states == -1)[0]
-
-        if act_cells.size:
-            if ups.size:
-                # +ve targets, TF activated: multiply by factor
-                counts[np.ix_(act_cells, ups)] = np.floor(counts[np.ix_(act_cells, ups)] * up_act_factor)
-            if downs.size:
-                # -ve targets, TF activated: multiply by factor
-                counts[np.ix_(act_cells, downs)] = np.floor(counts[np.ix_(act_cells, downs)] * down_act_factor)
-
-        if inact_cells.size:
-            if ups.size:
-                # +ve targets, TF inactivated: multiply by factor
-                counts[np.ix_(inact_cells, ups)] = np.floor(counts[np.ix_(inact_cells, ups)] * up_inact_factor)
-            if downs.size:
-                # -ve targets, TF inactivated: multiply by factor
-                counts[np.ix_(inact_cells, downs)] = np.floor(counts[np.ix_(inact_cells, downs)] * down_inact_factor)
-
-    # Ensure non-negative integer counts
-    counts = np.clip(counts, a_min=0, a_max=None).astype(int)
-
-    # ------------------------------------------
-    # 4) Normalize and log-transform to realistic scale
-    # ------------------------------------------
-    # Counts-per-10k (CP10K) then log1p; this yields values mostly in [0, ~6]
-    lib_after = counts.sum(axis=1)  # shape (n_cells,)
-    lib_after[lib_after == 0] = 1  # avoid division by zero
-    cp10k = (counts / lib_after[:, None]) * 1.0e4  # shape (n_cells, n_genes)
-    log_expr = np.log1p(cp10k)
-
-    expr = pd.DataFrame(log_expr, index=cell_ids, columns=gene_names)
-
-    # Optionally include TFs as expression features: simulate similarly sparse, weak signal
-    if include_tfs_in_expression:
-        # Small independent noise for TF "expression"
-        tf_counts = rng.poisson(0.1, size=(n_cells, n_tfs))
-        # add mild dropout to keep mostly zeros
-        tf_drop = rng.random(size=tf_counts.shape) < 0.8
-        tf_counts = tf_counts * (~tf_drop)
-        tf_cp10k = (tf_counts / lib_after[:, None]) * 1.0e4
-        tf_log = np.log1p(tf_cp10k)
-
-        tf_df = pd.DataFrame(tf_log, index=cell_ids, columns=tf_names)
-        expr = pd.concat([expr, tf_df], axis=1)
-
-    return expr
-
-
 # Updated: direct TF effect factor
 # Instead of old difficulty-based approach, use direct multiplicative factor
-def generate_gene_expression_neg_binomial_old_updated(
+def generate_gene_expression_neg_binomial_old(
         n_cells: int,
         n_genes: int,
         include_tfs_in_expression: bool,
@@ -740,7 +692,7 @@ def generate_gene_expression_neg_binomial_old_updated(
     # 1) Simulate raw counts with NB (Gamma-Poisson)
     # ------------------------------------------
     # Per-gene propensities (unnormalized), heavy-tailed like real data
-    gene_prop = rng.lognormal(mean=0.0, sigma=1.0, size=n_genes)
+    gene_prop = rng.lognormal(mean=0.0, sigma=0.5, size=n_genes)
     gene_prop = gene_prop / gene_prop.sum()  # convert to proportions that sum to 1
 
     # Per-cell library sizes (UMI totals), lognormal variability
@@ -869,29 +821,38 @@ if __name__ == "__main__":
         params = json.load(f)
         print(params)
 
-    # prior_df = generate_prior_poisson(
-    #     n_genes=params["n_genes"],
-    #     n_tfs=params["n_tfs"],
-    #     lambda_param=15,
-    #     random_seed=params["random_seed"],
-    # )
-
-    prior_df = generate_prior(
+    # ------------------------------------------
+    # STEP 1. Generate Prior
+    # ------------------------------------------
+    prior_df = generate_prior_poisson(
         n_genes=params["n_genes"],
         n_tfs=params["n_tfs"],
-        min_num_of_targets_per_tf=params["min_num_of_targets_per_tf"],
-        max_num_of_targets_per_tf=params["max_num_of_targets_per_tf"],
-        random_seed=params["random_seed"]
+        lambda_param=params["average_number_of_targets_per_tf"],
+        overlap_alpha_factor=params["overlap_alpha_factor"],
+        random_seed=params["random_seed"],
     )
+
+    # prior_df = generate_prior(
+    #     n_genes=params["n_genes"],
+    #     n_tfs=params["n_tfs"],
+    #     min_num_of_targets_per_tf=params["min_num_of_targets_per_tf"],
+    #     max_num_of_targets_per_tf=params["max_num_of_targets_per_tf"],
+    #     overlap_alpha_factor=params["overlap_alpha_factor"],
+    #     random_seed=params["random_seed"]
+    # )
 
     # prior_df = generate_prior_lognormal(
     #     n_genes=params["n_genes"],
     #     n_tfs=params["n_tfs"],
     #     min_num_of_targets_per_tf=params["min_num_of_targets_per_tf"],
     #     max_num_of_targets_per_tf=params["max_num_of_targets_per_tf"],
+    #     overlap_alpha_factor=params["overlap_alpha_factor"],
     #     random_seed=params["random_seed"],
     # )
 
+    # ------------------------------------------
+    # STEP 2. Generate Ground Truth
+    # ------------------------------------------
     ground_truth_df = generate_ground_truth(
         n_cells=params["n_cells"],
         n_tfs=params["n_tfs"],
@@ -899,6 +860,10 @@ if __name__ == "__main__":
         random_seed=params["random_seed"],
     )
 
+    # ------------------------------------------
+    # STEP 3. Generate Gene Expression Data
+    # ------------------------------------------
+    print("Generating gene expression data...")
     # Choose an expression generator version
     distribution_type = params.get("distribution_type", "negative_binomial")
     if distribution_type == "normal":
@@ -914,29 +879,7 @@ if __name__ == "__main__":
         )
 
     elif distribution_type == "negative_binomial":
-        # gene_exp = generate_gene_expression_neg_binomial(
-        #     n_cells=params["n_cells"],
-        #     n_genes=params["n_genes"],
-        #     include_tfs_in_expression=False,
-        #     tf_effect_factor=params["tf_effect_factor"],
-        #     missing_percentage=params["missing_percentage"],
-        #     random_seed=params["random_seed"],
-        #     prior_dfs=prior_df,
-        #     ground_truth_dfs=ground_truth_df
-        # )
-
-        # gene_exp = generate_gene_expression_neg_binomial_old(
-        #     n_cells=params["n_cells"],
-        #     n_genes=params["n_genes"],
-        #     include_tfs_in_expression=False,
-        #     prediction_difficulty="medium",
-        #     missing_percentage=params["missing_percentage"],
-        #     random_seed=params["random_seed"],
-        #     prior_dfs=prior_df,
-        #     ground_truth_dfs=ground_truth_df,
-        # )
-
-        gene_exp = generate_gene_expression_neg_binomial_old_updated(
+        gene_exp = generate_gene_expression_neg_binomial(
             n_cells=params["n_cells"],
             n_genes=params["n_genes"],
             include_tfs_in_expression=False,
@@ -944,17 +887,26 @@ if __name__ == "__main__":
             missing_percentage=params["missing_percentage"],
             random_seed=params["random_seed"],
             prior_dfs=prior_df,
-            ground_truth_dfs=ground_truth_df,
+            ground_truth_dfs=ground_truth_df
         )
+
+        # gene_exp = generate_gene_expression_neg_binomial_old(
+        #     n_cells=params["n_cells"],
+        #     n_genes=params["n_genes"],
+        #     include_tfs_in_expression=False,
+        #     tf_effect_factor=params["tf_effect_factor"],
+        #     missing_percentage=params["missing_percentage"],
+        #     random_seed=params["random_seed"],
+        #     prior_dfs=prior_df,
+        #     ground_truth_dfs=ground_truth_df,
+        # )
 
     else:
         raise ValueError("distribution_type must be one of {'normal','negative_binomial'}.")
 
     # move the target column to the end for easier viewing
     prior_out = prior_df[["TF", "weight", "target"]].copy()
-    prior_out["weight"] = prior_out["weight"].map(
-        {1: "upregulates-expression", -1: "downregulates-expression"}
-    )
+    prior_out["weight"] = prior_out["weight"].map({1: "upregulates-expression", -1: "downregulates-expression"})
     prior_out.to_csv(
         f"{params['output_dir']}/{params['output_prior_file']}",
         sep="\t",
