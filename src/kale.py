@@ -27,7 +27,7 @@ def std_dev_mean_norm_rank(n_population: int, k_sample: int) -> float:
         return 0.0
 
     var = ((n_population + 1) * (n_population - k_sample)) / (
-        12 * (n_population**2) * k_sample
+            12 * (n_population ** 2) * k_sample
     )
     return math.sqrt(max(var, 0.0))
 
@@ -44,7 +44,7 @@ def std_dev_weighted_mean_norm_rank(n_population: int, weights: np.ndarray) -> f
 
     sum_sq_weights = np.sum(np.square(weights))
     numerator = (n_population + 1) * ((n_population * sum_sq_weights) - 1)
-    denominator = 12 * (n_population**2)
+    denominator = 12 * (n_population ** 2)
 
     if denominator == 0:
         return 0.0
@@ -53,12 +53,10 @@ def std_dev_weighted_mean_norm_rank(n_population: int, weights: np.ndarray) -> f
 
 
 def _process_single_cell_unweighted_ranks(
-    cell_name: str,
-    expression_series: pd.Series,
-    priors_df: pd.DataFrame,
-    min_targets: int = 0,
-    scores_series: pd.Series = None,
-    weighted_power_factor: int = None,
+        cell_name: str,
+        expression_series: pd.Series,
+        priors_df: pd.DataFrame,
+        min_targets: int = 0,
 ) -> tuple[str, list, list, list]:
     """Processes a single cell using the UNWEIGHTED mean rank method."""
     expression_series.replace(0.0, np.nan, inplace=True)
@@ -68,9 +66,7 @@ def _process_single_cell_unweighted_ranks(
     if n_genes == 0:
         return cell_name, [], [], []
 
-    ranks_raw = rankdata(
-        -expr.values, method="average"
-    )  # Ranks in descending order (tie handled by average)
+    ranks_raw = rankdata(-expr.values, method="average")  # Ranks in descending order (tie handled by average)
     ranks_norm = (ranks_raw - 0.5) / n_genes
     rank_df = pd.DataFrame({"target": expr.index, "Rank": ranks_norm})
 
@@ -92,9 +88,7 @@ def _process_single_cell_unweighted_ranks(
 
     tf_summary["ActivationDir"] = np.where(tf_summary["RankMean"] < 0.5, 1, -1)
 
-    sigma = tf_summary["AvailableTargets"].apply(
-        lambda k: std_dev_mean_norm_rank(n_genes, k)
-    )
+    sigma = tf_summary["AvailableTargets"].apply(lambda k: std_dev_mean_norm_rank(n_genes, k))
     sigma = sigma.replace(0, np.nan)
     tf_summary["Z"] = (tf_summary["RankMean"] - 0.5) / sigma
 
@@ -114,12 +108,12 @@ def _process_single_cell_unweighted_ranks(
 
 
 def _process_single_cell_weighted_ranks(
-    cell_name: str,
-    expression_series: pd.Series,
-    priors_df: pd.DataFrame,
-    min_targets: int = 0,
-    scores_series: pd.Series = None,
-    weighted_power_factor: int = None,
+        cell_name: str,
+        expression_series: pd.Series,
+        priors_df: pd.DataFrame,
+        min_targets: int = 0,
+        scores_series: pd.Series = None,
+        weighted_power_factor: int = None,
 ) -> tuple[str, list, list, list]:
     """Processes a single cell using the WEIGHTED mean rank method."""
     expression_series.replace(0.0, np.nan, inplace=True)
@@ -134,7 +128,8 @@ def _process_single_cell_weighted_ranks(
         # Use power_scale, as a power to scale the weights, to amplify the differences
         priors_df["scores"] = priors_df["source"].map(scores_series.abs())
         priors_df["scores_power_raised"] = priors_df["scores"] ** weighted_power_factor
-        priors_df["weight_factor"] = priors_df["scores_power_raised"] / priors_df.groupby("target")["scores_power_raised"].transform("sum")
+        priors_df["weight_factor"] = priors_df["scores_power_raised"] / priors_df.groupby("target")[
+            "scores_power_raised"].transform("sum")
 
     ranks_raw = rankdata(-expr.values, method="average")  # Ranks in descending order
     ranks_norm = (ranks_raw - 0.5) / n_genes
@@ -202,130 +197,84 @@ def _process_single_cell_weighted_ranks(
     )
 
 
-def _process_single_cell_stouffer(
-    cell_name: str, expression_z_scores: pd.Series, priors_df: pd.DataFrame
-) -> tuple[str, list, list, list]:
-    priors_group = priors_df.groupby("source", observed=True).agg(
-        {"target": list, "weight": list}
-    )
-
-    valid_z_scores = expression_z_scores.dropna()
-    if valid_z_scores.empty:
-        return cell_name, [], [], []
-
-    z_score_map = valid_z_scores.to_dict()
-    regulators, p_values, directions = [], [], []
-
-    # Iterate through the pre-grouped priors
-    for tf, data in priors_group.iterrows():
-        target_genes = data["target"]
-        effects = data["weight"]
-
-        evidence_z = []
-        for i, gene in enumerate(target_genes):
-            z = z_score_map.get(gene)
-            if z is not None:
-                evidence_z.append(-z if effects[i] < 0 else z)
-
-        k = len(evidence_z)
-
-        # Calculate Stouffer's Z
-        z_sum = np.sum(evidence_z)
-        stouffer_z = z_sum / np.sqrt(k) if k > 0 else 0
-
-        # Use a two-tailed test for the p-value
-        p_value = 2 * norm.sf(abs(stouffer_z))
-
-        # Direction is the sign of the combined evidence
-        direction = np.sign(stouffer_z)
-
-        regulators.append(tf)
-        p_values.append(p_value)
-        directions.append(direction)
-
-    return (cell_name, regulators, p_values, directions)
-
-
 def run_tf_analysis(
-    adata: AnnData,
-    priors: pd.DataFrame,
-    ignore_zeros: bool,
-    min_targets: int,
-    analysis_method: str,
-    weighted: bool,
-    weighted_power_factor:int,
-    cores: int,
-    scores: pd.DataFrame = None,
+        adata: AnnData,
+        priors: pd.DataFrame,
+        ignore_zeros: bool,
+        min_targets: int,
+        analysis_method: str,
+        weighted: bool,
+        weighted_power_factor: int,
+        cores: int,
+        scores: pd.DataFrame = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    try:
-        if adata is None or adata.n_obs == 0:
-            raise ValueError("Input data is empty or invalid")
+    """Runs TF activity analysis on single-cell data using a specified method."""
+    X = adata.X.toarray() if issparse(adata.X) else adata.X.copy()
 
-        X = adata.X.toarray() if issparse(adata.X) else adata.X.copy()
-
-        # Filter priors based on min_targets and presence in the data
-        priors = priors[priors["target"].isin(adata.var_names)]
-        priors = priors.groupby("source").filter(lambda x: len(x) >= min_targets)
-
-        match analysis_method:
-            case "ranks_from_zscore":
-                print("Calculating Z-scores as required by the selected method...")
-                if ignore_zeros:
-                    X[X == 0] = np.nan
-                    z_mat = zscore(X, axis=0, nan_policy="omit")
-                else:
-                    z_mat = zscore(X, axis=0)
-                data_for_processing = pd.DataFrame(
-                    z_mat, index=adata.obs_names, columns=adata.var_names
-                )
-
-            case "rank_of_ranks":
-                print("Using raw gene expression as input for per-cell ranking...")
-                data_for_processing = pd.DataFrame(
-                    X, index=adata.obs_names, columns=adata.var_names, dtype=float
-                )
-                if ignore_zeros:
-                    mask = data_for_processing != 0
-                    data_for_processing[mask] = data_for_processing[mask].rank(
-                        axis=0, method="average", ascending=True
-                    )
-                    data_for_processing[~mask] = 0
-                else:
-                    data_for_processing = data_for_processing.rank(
-                        axis=0, method="average", ascending=True
-                    )
-
-            # case "stouffers_zscore":
-            #     print("Using Z-scores as input for Stouffer's method...")
-            #     process_func = _process_single_cell_stouffer
-            #     # TODO: Stouffer's method does not work as of now.
-
-            case _:
-                raise ValueError(
-                    f"Unknown analysis method family for: {analysis_method}"
-                )
-
-        # Step 2: Select the appropriate worker function
-        if weighted:
-            print("Calculating weighted gene expression as input for per-cell ranking...")
-            process_func = _process_single_cell_weighted_ranks
-            target_source_counts = priors.groupby('target')['source'].nunique()
-            priors['weight_factor'] = priors['target'].map(target_source_counts).apply(lambda x: 1 / x)
-        else:
-            process_func = _process_single_cell_unweighted_ranks
-
-        if process_func is None or data_for_processing is None:
-            raise RuntimeError(
-                "Failed to select a processing function or prepare data."
+    match analysis_method:
+        case "ranks_from_zscore":
+            print("Calculating Z-scores as required by the selected method...")
+            if ignore_zeros:
+                X[X == 0] = np.nan
+                z_mat = zscore(X, axis=0, nan_policy="omit")
+            else:
+                z_mat = zscore(X, axis=0)
+            data_for_processing = pd.DataFrame(
+                z_mat, index=adata.obs_names, columns=adata.var_names
             )
 
-        # ───── Parallel processing of cells ───────────────────────────────────────
-        if scores is not None:
-            print(
-                f"Starting TF activity using {cores if cores > 0 else 'all available'} cores."
+        case "rank_of_ranks":
+            print("Using raw gene expression as input for per-cell ranking...")
+            data_for_processing = pd.DataFrame(
+                X, index=adata.obs_names, columns=adata.var_names, dtype=float
             )
-            tasks = [
-                delayed(process_func)(
+            if ignore_zeros:
+                mask = data_for_processing != 0
+                data_for_processing[mask] = data_for_processing[mask].rank(
+                    axis=0, method="average", ascending=True
+                )
+                data_for_processing[~mask] = 0
+            else:
+                data_for_processing = data_for_processing.rank(axis=0, method="average", ascending=True)
+
+        case _:
+            raise ValueError(f"Unknown analysis method family for: {analysis_method}")
+
+    # Step 2: Select the appropriate worker function
+    if weighted:
+        print("Calculating weighted gene expression as input for per-cell ranking...")
+        process_func = _process_single_cell_weighted_ranks
+        target_source_counts = priors.groupby('target')['source'].nunique()
+        priors['weight_factor'] = priors['target'].map(target_source_counts).apply(lambda x: 1 / x)
+    else:
+        process_func = _process_single_cell_unweighted_ranks
+
+    if process_func is None or data_for_processing is None:
+        raise RuntimeError(
+            "Failed to select a processing function or prepare data."
+        )
+
+    # ───── Parallel processing of cells ───────────────────────────────────────
+    if scores is not None:
+        print(
+            f"Starting TF activity using {cores if cores > 0 else 'all available'} cores."
+        )
+        tasks = [
+            delayed(process_func)(
+                cell_name,
+                data_for_processing.loc[cell_name],
+                priors,
+                min_targets,
+                scores.loc[cell_name],
+                weighted_power_factor,
+            )
+            for cell_name in data_for_processing.index
+        ]
+
+        if cores == 1:
+            print("Running sequentially (CORES_USED=1)...")
+            cell_results_list = [
+                process_func(
                     cell_name,
                     data_for_processing.loc[cell_name],
                     priors,
@@ -333,143 +282,107 @@ def run_tf_analysis(
                     scores.loc[cell_name],
                     weighted_power_factor,
                 )
-                for cell_name in data_for_processing.index
-            ]
-
-            if cores == 1:
-                print("Running sequentially (CORES_USED=1)...")
-                cell_results_list = [
-                    process_func(
-                        cell_name,
-                        data_for_processing.loc[cell_name],
-                        priors,
-                        min_targets,
-                        scores.loc[cell_name],
-                        weighted_power_factor,
-                    )
-                    for cell_name in tqdm(
-                        data_for_processing.index, desc="Processing cells in sequence"
-                    )
-                ]
-            else:
-                print(f"Running in parallel with CORES_USED={cores}.")
-                cell_results_list = Parallel(n_jobs=cores, backend="loky", verbose=1)(
-                    tqdm(tasks, desc="Processing cells in parallel", total=len(tasks))
+                for cell_name in tqdm(
+                    data_for_processing.index, desc="Processing cells in sequence"
                 )
+            ]
         else:
-            print(
-                f"Starting TF activity using {cores if cores > 0 else 'all available'} cores."
+            print(f"Running in parallel with CORES_USED={cores}.")
+            cell_results_list = Parallel(n_jobs=cores, backend="loky", verbose=1)(
+                tqdm(tasks, desc="Processing cells in parallel", total=len(tasks))
             )
-            tasks = [
-                delayed(process_func)(
+    else:
+        print(
+            f"Starting TF activity using {cores if cores > 0 else 'all available'} cores."
+        )
+        tasks = [
+            delayed(process_func)(
+                cell_name,
+                data_for_processing.loc[cell_name],
+                priors,
+                min_targets
+            )
+            for cell_name in data_for_processing.index
+        ]
+
+        if cores == 1:
+            print("Running sequentially (CORES_USED=1)...")
+            cell_results_list = [
+                process_func(
                     cell_name,
                     data_for_processing.loc[cell_name],
                     priors,
-                    min_targets
+                    min_targets,
                 )
-                for cell_name in data_for_processing.index
+                for cell_name in tqdm(
+                    data_for_processing.index, desc="Processing cells in sequence"
+                )
             ]
-
-            if cores == 1:
-                print("Running sequentially (CORES_USED=1)...")
-                cell_results_list = [
-                    process_func(
-                        cell_name,
-                        data_for_processing.loc[cell_name],
-                        priors,
-                        min_targets,
-                    )
-                    for cell_name in tqdm(
-                        data_for_processing.index, desc="Processing cells in sequence"
-                    )
-                ]
-            else:
-                print(f"Running in parallel with CORES_USED={cores}.")
-                cell_results_list = Parallel(n_jobs=cores, backend="loky", verbose=1)(
-                    tqdm(tasks, desc="Processing cells in parallel", total=len(tasks))
-                )
-
-        # print(f"Starting TF activity using {cores if cores > 0 else 'all available'} cores.")
-        # tasks = [
-        #     delayed(process_func)(cell_name, data_for_processing.loc[cell_name], priors, min_targets)
-        #     for cell_name in data_for_processing.index
-        # ]
-        #
-        # if cores == 1:
-        #     print("Running sequentially (CORES_USED=1)...")
-        #     cell_results_list = [
-        #         process_func(cell_name, data_for_processing.loc[cell_name], priors, min_targets)
-        #         for cell_name in tqdm(data_for_processing.index, desc="Processing cells in sequence")
-        #     ]
-        # else:
-        #     print(f"Running in parallel with CORES_USED={cores}.")
-        #     cell_results_list = Parallel(n_jobs=cores, backend="loky", verbose=1)(
-        #         tqdm(tasks, desc="Processing cells in parallel", total=len(tasks))
-        #     )
-
-        # ───── Aggregate results into two separate DataFrames ───────────────────
-        print("\nAggregating results...")
-        records = [
-            (cell, reg, pval, direc)
-            for cell, regs, pvals, direcs in cell_results_list
-            for reg, pval, direc in zip(regs, pvals, direcs)
-        ]
-
-        if not records:
-            print(
-                "Warning: No TF activities could be computed. Returning empty DataFrame."
-            )
-            return pd.DataFrame(index=adata.obs_names), pd.DataFrame(
-                index=adata.obs_names
+        else:
+            print(f"Running in parallel with CORES_USED={cores}.")
+            cell_results_list = Parallel(n_jobs=cores, backend="loky", verbose=1)(
+                tqdm(tasks, desc="Processing cells in parallel", total=len(tasks))
             )
 
-        results_df = pd.DataFrame(
-            records, columns=["cell", "regulator", "p_value", "direction"]
+    # ───── Aggregate results into two separate DataFrames ───────────────────
+    print("\nAggregating results...")
+    records = [
+        (cell, reg, pval, direc)
+        for cell, regs, pvals, direcs in cell_results_list
+        for reg, pval, direc in zip(regs, pvals, direcs)
+    ]
+
+    if not records:
+        print(
+            "Warning: No TF activities could be computed. Returning empty DataFrame."
         )
-        pvalue_df = results_df.pivot(
-            index="cell", columns="regulator", values="p_value"
-        )
-        activation_df = results_df.pivot(
-            index="cell", columns="regulator", values="direction"
+        return pd.DataFrame(index=adata.obs_names), pd.DataFrame(
+            index=adata.obs_names
         )
 
-        pvalue_df = pvalue_df.reindex(adata.obs_names)
-        activation_df = activation_df.reindex(adata.obs_names)
+    results_df = pd.DataFrame(
+        records, columns=["cell", "regulator", "p_value", "direction"]
+    )
+    pvalue_df = results_df.pivot(
+        index="cell", columns="regulator", values="p_value"
+    )
+    activation_df = results_df.pivot(
+        index="cell", columns="regulator", values="direction"
+    )
 
-        scores = (
+    pvalue_df = pvalue_df.reindex(adata.obs_names)
+    activation_df = activation_df.reindex(adata.obs_names)
+
+    scores = (
             -np.log(np.clip(pvalue_df.to_numpy(), 1e-300, None))
             * activation_df.to_numpy()
-        )
-        scores = pd.DataFrame(scores, index=pvalue_df.index, columns=pvalue_df.columns)
+    )
+    scores = pd.DataFrame(scores, index=pvalue_df.index, columns=pvalue_df.columns)
 
-        print("kale completed")
-        return scores, pvalue_df
-
-    except Exception as e:
-        print(f"Error during TF analysis: {e}")
-        raise
+    print("kale completed")
+    return scores, pvalue_df
 
 
 def func_kale(
-    adata: AnnData = None,
-    net: pd.DataFrame = None,
-    method: str = "rank_of_ranks",
-    weighted: bool = False,
-    weighted_power_factor: int = 0,
-    min_targets: int = 1,
-    ignore_zeros: bool = True,
-    cores: int = 8,
+        adata: AnnData = None,
+        net_filtered: pd.DataFrame = None,
+        method: str = "rank_of_ranks",
+        weighted: bool = False,
+        weighted_power_factor: int = 0,
+        min_targets: int = 1,
+        ignore_zeros: bool = True,
+        cores: int = 8,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     # Check that adata and net are provided, since they are now the primary inputs
-    if adata is None or net is None:
+    if adata is None or net_filtered is None:
         raise ValueError("`adata` and `net` must be provided for the kale method.")
 
     if weighted:
-        net["weight_factor"] = 1
+        net_filtered["weight_factor"] = 1
 
     scores, pvalues = run_tf_analysis(
         adata,
-        net,
+        net_filtered,
         ignore_zeros,
         min_targets=min_targets,
         analysis_method=method,
@@ -478,14 +391,20 @@ def func_kale(
         cores=cores,
     )
 
-    # Fill NaNs with 0 in scores (no activity detected)
-    scores.fillna(0)
-    pvalues.fillna(1)
+    # Count missing values and fill them
+    missing_scores = scores.isna().sum().sum()
+    missing_pvalues = pvalues.isna().sum().sum()
+    if missing_scores > 0:
+        print(f"Filling {missing_scores} missing score values with 0.")
+        scores.fillna(0)
+    if missing_pvalues > 0:
+        print(f"Filling {missing_pvalues} missing p-value values with 1.")
+        pvalues.fillna(1)
 
     # Ensure the final output aligns with all sources in the net, filling missing with NaN
-    all_sources = net["source"].unique()
-    scores = scores.reindex(columns=all_sources, fill_value=np.nan)
-    pvalues = pvalues.reindex(columns=all_sources, fill_value=np.nan)
+    # all_sources = net["source"].unique()
+    # scores = scores.reindex(columns=all_sources, fill_value=np.nan)
+    # pvalues = pvalues.reindex(columns=all_sources, fill_value=np.nan)
 
     # Sophisticated way to calculating weight_factor based on scores
     # Then run analysis again with updated weight_factors
@@ -497,7 +416,7 @@ def func_kale(
         )
         scores, pvalues = run_tf_analysis(
             adata,
-            net,
+            net_filtered,
             ignore_zeros,
             min_targets=min_targets,
             analysis_method=method,
@@ -508,7 +427,7 @@ def func_kale(
         )
         scores.fillna(0)
         pvalues.fillna(1)
-        all_sources = net["source"].unique()
+        all_sources = net_filtered["source"].unique()
         scores = scores.reindex(columns=all_sources, fill_value=np.nan)
         pvalues = pvalues.reindex(columns=all_sources, fill_value=np.nan)
 
@@ -519,6 +438,7 @@ if __name__ == "__main__":
 
     def str_to_bool(x):
         return x.lower() == "true"
+
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--gene_exp_file", required=True)
@@ -546,8 +466,26 @@ if __name__ == "__main__":
     else:
         raise ValueError("gene_exp_file must be either .h5ad or .tsv format")
 
-    effect_map = {"upregulates-expression": 1, "downregulates-expression": -1}
+    # Preprocess adata
+    print("Preprocessing gene expression data...")
+    # 1. Filter low-quality genes and cells
+    sc.pp.filter_cells(adata, min_genes=500)
+    sc.pp.filter_genes(adata, min_cells=10)
+    print("Shape after filtering: ", adata.shape)
 
+    # 2. Mitochondrial/QC filter
+    adata.var['mt'] = adata.var_names.str.startswith('MT-')  # assuming human data; use 'mt-' for mouse
+    sc.pp.calculate_qc_metrics(adata, qc_vars=['mt'], percent_top=None, log1p=False, inplace=True)
+    adata = adata[adata.obs.pct_counts_mt < 20, :]  # filter cells with >20% mitochondrial genes
+    print("Final Shape ", adata.shape)
+
+    # 3. Normalize (Corrects sequencing depth)
+    sc.pp.normalize_total(adata, target_sum=1e4)
+    # 4. Log transform (Stabilizes variance / makes data Gaussian-like)
+    sc.pp.log1p(adata)
+    # sc.pp.scale(adata, max_value=10)
+
+    effect_map = {"upregulates-expression": 1, "downregulates-expression": -1}
     net = pd.read_csv(
         args.prior_file,
         sep="\t",
@@ -556,9 +494,15 @@ if __name__ == "__main__":
         converters={"weight": effect_map.get},
     )[["source", "target", "weight"]]
 
+    # Filter targets network
+    net_filtered = net[net['target'].isin(adata.var_names)]
+    net_filtered = net_filtered.groupby('source').filter(lambda x: len(x) >= args.min_targets)
+    net_filtered = net_filtered.reset_index(drop=True)
+    # net_filtered = net_filtered[net_filtered['source'].isin(adata.var_names)]
+
     score_kale, pvalue_kale = func_kale(
         adata,
-        net,
+        net_filtered,
         method=args.method,
         weighted=args.weighted,
         weighted_power_factor=args.weighted_power_factor,
